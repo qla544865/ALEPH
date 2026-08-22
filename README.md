@@ -146,4 +146,4 @@ self.objects.append(MyEntity(self, x=200, y=150))
 
 Full per-class API reference, attribute tables, architecture diagrams, and notes:
 
-→ [ALEPH_Documentation.md](ALEPH_Documentation.md)
+→ [Documentation.md](Documentation.md)
