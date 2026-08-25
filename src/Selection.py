@@ -26,14 +26,18 @@ class MarqueeSelection(GameObject):
         screen_center_x = self.game.surface.get_width() // 2
         screen_center_y = self.game.surface.get_height() // 2
 
-        for obj in self.game.objects:
+
+        for obj in self.game.characters:
             draw_x = (obj.x - camera.x) * scale + screen_center_x
             draw_y = (obj.y - camera.y) * scale + screen_center_y
             
-            # zoomed_size = obj.size * scale 
-            # obj_rect = pygame.Rect(draw_x, draw_y, zoomed_size, zoomed_size)
+            zoomed_size = obj.size * scale 
+            obj_rect = pygame.Rect(draw_x, draw_y, zoomed_size, zoomed_size)
 
-            if selection_rect.collidepoint(draw_x, draw_y):
+            if (width == 0 or height == 0) and obj_rect.collidepoint(min_x, min_y) :
+                self.selected_objects.append(obj)
+                obj.is_selected = not obj.is_selected
+            elif ((width > 0 and height > 0)) and selection_rect.colliderect(obj_rect):
                 self.selected_objects.append(obj)
                 obj.is_selected = True
             else:

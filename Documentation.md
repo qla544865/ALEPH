@@ -1,4 +1,4 @@
-# ALEPH — Project Documentation
+# ALEPH — Documentation
 
 > **Python 3.10.1** · **pygame 2.6.1**
 
@@ -21,7 +21,7 @@ marquee selection, an event dispatcher, and a centralised asset manager.
   - [Event.py](#eventpy)
   - [AssetManager.py](#assetmanagerpy)
   - [Character.py](#characterpy)
-  - [testObj.py](#testobjpy)
+  - [testObj.py](#testobjpy--testobj--testmouse)
 - [Dependency Graph](#dependency-graph)
 - [Controls Reference](#controls-reference)
 - [How-To Guides](#how-to-guides)
@@ -55,9 +55,9 @@ pygame==2.6.1
 ```
 
 > [!IMPORTANT]
-> This project targets **Python 3.10.1** exclusively. Type hints in
-> `AssetManager.py` use `dict[K, V]` and `tuple[...]` (PEP 585, available
-> since 3.9) and `X | None` union syntax (PEP 604, available since 3.10).
+> This project targets **Python 3.10.1** exclusively. Type hints use
+> `dict[K, V]` and `tuple[...]` (PEP 585, available since 3.9) and
+> `X | None` union syntax (PEP 604, available since 3.10).
 
 ---
 
@@ -72,15 +72,15 @@ ALEPH/
 ├── src/                    # Source code
 │   ├── main.py             #   Entry point
 │   ├── Game.py             #   Core game loop & subsystem wiring
-│   ├── GameObject.py       #   Base class for world entities
-│   ├── Camera.py           #   Pan & zoom camera
+│   ├── GameObject.py       #   Base class — position, model, drawing helpers
+│   ├── Camera.py           #   Pan & zoom camera + screen↔world conversion
 │   ├── Selection.py        #   Marquee (rubber-band) selection
 │   ├── Event.py            #   Event / EventManager dispatcher
 │   ├── AssetManager.py     #   Lazy-loading asset cache
-│   ├── Character.py        #   Character entity (extends GameObject)
-│   └── testObj.py          #   Debug grid object (extends GameObject)
-├── requirements.txt
-└── .venv/
+│   ├── Character.py        #   Character entity (sprite + select outline)
+│   └── testObj.py          #   TestObj (debug grid) & TestMouse (cursor dot)
+├── .gitignore
+└── requirements.txt
 ```
 
 ---
@@ -95,15 +95,19 @@ graph TD
     GAME -->|"owns"| SEL["MarqueeSelection"]
     GAME -->|"owns"| EVT["EventManager"]
     GAME -->|"owns"| AM["AssetManager"]
-    GAME -->|"owns list"| OBJS["objects: list"]
+    GAME -->|"owns list"| OBJS["objects[]"]
+    GAME -->|"owns list"| CHARS["characters[]"]
 
     OBJS -->|"contains"| TOBJ["TestObj"]
+    OBJS -->|"contains"| TMOUSE["TestMouse"]
     OBJS -->|"contains"| CHAR["Character"]
+    CHARS -->|"contains"| CHAR
 
-    CAM  -->|"extends"| GO["GameObject"]
-    SEL  -->|"extends"| GO
-    TOBJ -->|"extends"| GO
-    CHAR -->|"extends"| GO
+    CAM   -->|"extends"| GO["GameObject"]
+    SEL   -->|"extends"| GO
+    TOBJ  -->|"extends"| GO
+    TMOUSE-->|"extends"| GO
+    CHAR  -->|"extends"| GO
 
     EVT -->|"dispatches"| EV["Event"]
 
@@ -117,8 +121,16 @@ graph TD
 Game.gameLoop()
   ├── eventHandle()      ← poll pygame events, feed EventManager
   ├── update()           ← update camera, then each object
-  └── draw()             ← clear screen, draw objects, draw selection, flip
+  ├── draw()             ← clear screen, draw objects, draw selection, flip
+  └── set_caption()      ← update window title with live FPS
 ```
+
+**Two object lists:**
+
+| List | Purpose |
+|---|---|
+| `game.objects` | Everything that gets `update()` + `draw()` each frame |
+| `game.characters` | Subset of objects that are selectable by marquee |
 
 ---
 
@@ -128,7 +140,7 @@ Game.gameLoop()
 
 ### main.py
 
-[`main.py`] · 6 lines
+`main.py` · 6 lines
 
 **Purpose:** Entry point — creates a `Game` and starts the loop.
 
@@ -141,14 +153,14 @@ if __name__ == "__main__":
 ```
 
 > [!NOTE]
-> `Game.py` also has its own `if __name__` guard at the bottom, so you
-> can run either `python main.py` or `python Game.py` during development.
+> `Game.py` also has its own `if __name__` guard, so you can run either
+> `python main.py` or `python Game.py` during development.
 
 ---
 
 ### Game.py
 
-[`Game.py`] · 111 lines
+`Game.py` · 124 lines
 
 **Purpose:** Central hub. Initialises pygame, owns every subsystem, runs
 the game loop, and dispatches events.
@@ -157,7 +169,7 @@ the game loop, and dispatches events.
 
 | Attribute | Type | Description |
 |---|---|---|
-| `surface` | `pygame.Surface` | The main display (1280 × 720) |
+| `surface` | `pygame.Surface` | Main display (1280 × 720) |
 | `running` | `bool` | `False` to exit the loop |
 | `keyPressed` | `ScancodeWrapper` | Snapshot of all keys (updated each frame) |
 | `dt` | `float` | Delta-time in **seconds** |
@@ -170,35 +182,39 @@ the game loop, and dispatches events.
 | `eventManager` | `EventManager` | Custom event dispatcher |
 | `AssetManager` | `AssetManager` | Centralised asset cache |
 | `objects` | `list[GameObject]` | All updateable/drawable entities |
-| `fps` | `int` | Target framerate (60) |
+| `characters` | `list[Character]` | Selectable entities (subset of objects) |
+| `fps` | `int` | Target framerate (**120**) |
 | `clock` | `pygame.time.Clock` | Frame-rate clock |
 
 #### Methods
 
 | Method | Description |
 |---|---|
-| `gameLoop()` | Main loop: `eventHandle → update → draw`. Calls `quit()` on exit. |
-| `eventHandle()` | Polls pygame events, forwards them to `eventManager.update()`, handles mouse-wheel / mouse-button logic and drives the selection state machine. |
+| `gameLoop()` | Main loop: `eventHandle → update → draw`. Updates window title with live FPS. Calls `quit()` on exit. |
+| `eventHandle()` | Polls pygame events, forwards to `eventManager.update()`, handles mouse-wheel / mouse-button logic and drives the selection state machine. |
 | `update()` | Refreshes `keyPressed`, updates camera, then updates each object. |
 | `draw()` | Clears to dark blue `(10, 10, 50)`, draws every object, draws selection overlay, flips display. |
 | `onQuit(event)` | Callback registered with `EventManager` for `pygame.QUIT`. Sets `running = False`. |
 | `quit()` | Calls `pygame.quit()`. |
 
 > [!NOTE]
-> **`eventHandle` notes:**
-> - `scrolling` and `mouseButtonDown` are reset to `0` at the top of each
->   frame — they are **per-frame impulse values**, not held state.
-> - Left-click starts marquee selection; right-click records position for
->   camera drag.
-> - `pygame.QUIT` is handled via `EventManager`, not inline.
+> **Init order matters.** `AssetManager` is created **before** `Camera`,
+> `Selection`, and game objects, because entities (like `Character`) load
+> assets during `__init__`.
+
+> [!NOTE]
+> `scrolling` and `mouseButtonDown` are reset to `0` each frame — they
+> are per-frame impulse values, not held state.
 
 ---
 
 ### GameObject.py
 
-[`GameObject.py`] · 21 lines
+`GameObject.py` · 93 lines
 
-**Purpose:** Abstract base for every world entity.
+**Purpose:** Base class for every world entity. Provides world position,
+an optional sprite (`model`), and camera-aware drawing helpers so
+subclasses don't need to recompute projection manually.
 
 #### Class `GameObject`
 
@@ -207,30 +223,70 @@ the game loop, and dispatches events.
 | `x` | `float` | `0` | World-space X |
 | `y` | `float` | `0` | World-space Y |
 | `game` | `Game` | — | Back-reference to the game instance |
+| `screen_width` | `int` | — | Cached `surface.get_width()` |
+| `screen_height` | `int` | — | Cached `surface.get_height()` |
+| `screen_center_x` | `int` | — | `screen_width // 2` |
+| `screen_center_y` | `int` | — | `screen_height // 2` |
+| `model` | `pygame.Surface \| None` | `None` | Sprite surface (set by subclass) |
+| `size` | `int` | `0` | Logical size in world units |
 
 #### Methods
 
-| Method | Description |
-|---|---|
-| `getScreenPosition()` | Returns `(x - camera.x/2, y - camera.y/2)`. |
-| `draw()` | Override to render the object. No-op by default. |
-| `update()` | Override for per-frame logic. No-op by default. |
+| Method | Signature | Returns | Description |
+|---|---|---|---|
+| `getPositionOnScreen()` | `()` | `(float, float)` | Projects `(x, y)` to screen coordinates using the camera's position and zoom. |
+| `getSizeScaleOnScreen()` | `()` | `float` | Returns the current zoom scale factor. |
+| `drawModel()` | `()` | — | Draws `self.model` at the camera-projected position, scaled by zoom. Uses `smoothscale` when zooming in (scale ≥ 1) and `scale` when zooming out for performance. Silently returns if `model is None`. |
+| `drawRect()` | `(color, size, offset=(0,0), border_width=-1)` | — | Draws a camera-projected rectangle. `size` can be an `int`/`float` (square) or a `list`/`tuple` (w, h). `offset` shifts the draw position in screen pixels. `border_width=-1` fills; positive values draw an outline. |
+| `draw()` | `()` | — | Override in subclass. No-op by default. |
+| `update()` | `()` | — | Override in subclass. No-op by default. |
 
-> [!WARNING]
-> **`getScreenPosition()` uses a different formula** (`camera / 2`) than
-> the world→screen projection used elsewhere in the codebase (which is
-> `(world - cam) * scale + screen_center`). This method is currently
-> unused; if you use it, be aware it won't match Camera/TestObj/Character
-> rendering.
+#### `drawRect` in detail
+
+```python
+def drawRect(self, color, size, offset=(0,0), border_width=-1)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `color` | `tuple` | — | RGB colour |
+| `size` | `int`, `float`, or `tuple`/`list` | — | If scalar → square. If `(w, h)` → rectangle. Automatically scaled by zoom. |
+| `offset` | `tuple` or `int`/`float` | `(0, 0)` | Pixel offset added to the projected screen position. Scalar is expanded to `(v, v)`. |
+| `border_width` | `int` | `-1` | `-1` = filled rect. Positive = outline thickness. |
+
+> [!NOTE]
+> `size` and `offset` accept both scalar and tuple forms — `isinstance`
+> checks normalise them internally.
+
+#### World → Screen Projection
+
+All drawing helpers use the same formula:
+
+```
+scale    = max(0.1,  1.0 + fov * 0.1)
+screen_x = (world_x - camera.x) * scale + screen_center_x
+screen_y = (world_y - camera.y) * scale + screen_center_y
+```
+
+> [!NOTE]
+> `screen_width`, `screen_height`, and `screen_center_*` are computed
+> once in `__init__` and cached. If you support window resizing in the
+> future, these will need to be recalculated.
+
+> [!TIP]
+> **Use the drawing helpers** (`drawModel`, `drawRect`) instead of
+> manually computing projection in every entity. They handle zoom
+> scaling, null-model guards, and flexible `size`/`offset` types.
 
 ---
 
 ### Camera.py
 
-[`Camera.py`] · 73 lines
+`Camera.py` · 82 lines
 
 **Purpose:** Viewport controller — pans with WASD / right-click drag,
-zooms with `+`/`-` and mouse wheel.
+zooms with `+`/`-` and mouse wheel. Also provides screen↔world coordinate
+conversion.
 
 #### Class `Camera` (extends `GameObject`)
 
@@ -239,15 +295,16 @@ zooms with `+`/`-` and mouse wheel.
 | `x, y` | `float` | `0` | Camera centre in world-space |
 | `fov` | `float` | `0` | Zoom level (`-8` = zoomed out, `+8` = zoomed in) |
 | `mx_fov` | `int` | `8` | Absolute max zoom magnitude |
-| `mouse_rel` | `tuple or None` | `None` | Accumulated drag delta |
-| `prev_cam_pos` | `tuple or None` | `None` | Camera pos when drag started |
+| `mouse_rel` | `tuple \| None` | `None` | Accumulated drag delta |
+| `prev_cam_pos` | `tuple \| None` | `None` | Camera pos when drag started |
 
 #### Methods
 
-| Method | Description |
-|---|---|
-| `onChangeFov()` | Clamps `fov` to `[-mx_fov, mx_fov]`. |
-| `update()` | Reads keyboard/mouse input and updates position + zoom. |
+| Method | Returns | Description |
+|---|---|---|
+| `onChangeFov()` | — | Clamps `fov` to `[-mx_fov, mx_fov]`. |
+| `getWorldMousePos()` | `(float, float)` | Converts the current mouse screen position to world coordinates. Inverse of the standard projection formula. |
+| `update()` | — | Reads keyboard/mouse input and updates position + zoom. |
 
 #### Zoom & Projection Maths
 
@@ -261,26 +318,29 @@ scale = max(0.1,  1.0 + fov * 0.1)
 | `0` | `1.0` | Default view |
 | `+8` | `1.8` | Zoomed in (1.8× larger) |
 
+**`getWorldMousePos()`** performs the inverse projection:
+
+```
+world_x = (mouse_screen_x - screen_center_x) / scale + camera.x
+world_y = (mouse_screen_y - screen_center_y) / scale + camera.y
+```
+
 **Keyboard pan** speed is inversely proportional to scale (`300 / scale`),
 so panning feels consistent regardless of zoom.
 
 **Right-click drag** saves the camera position on mouse-down, then on each
-frame computes the delta between the saved click position and current mouse
-position, divides by scale, and offsets from the saved camera position.
-
-> [!NOTE]
-> The drag implementation is **position-based** (not motion-based). It
-> stores `prev_cam_pos` once and always offsets from it, so the camera
-> snaps back if the mouse returns to the click origin.
+frame offsets from the saved position by the delta between click origin
+and current mouse, divided by scale.
 
 ---
 
 ### Selection.py
 
-[`Selection.py`] · 54 lines
+`Selection.py` · 58 lines
 
 **Purpose:** Rubber-band (marquee) selection drawn while left mouse button
-is held.
+is held. Iterates over `game.characters` (not `game.objects`) to determine
+which entities are selected.
 
 #### Class `MarqueeSelection` (extends `GameObject`)
 
@@ -295,24 +355,33 @@ is held.
 
 | Method | Description |
 |---|---|
-| `update()` | Called on mouse-up. Builds a `Rect` from start→end, projects each object to screen, tests `collidepoint`, and sets `obj.is_selected`. |
+| `update()` | Called on mouse-up. Builds a `Rect` from start→end, projects each character to screen, tests for intersection. |
 | `draw()` | While selecting: updates `selection_end` to cursor, draws a green `(100, 255, 100)` rect outline (width 5). |
 
-> [!NOTE]
-> Selection currently tests only a **single point** per object (the
-> object's top-left screen position). There is commented-out code for
-> bounding-box `colliderect` testing — enable it once objects expose a
-> `size` attribute.
+#### Selection Behaviour
+
+The `update()` method handles two distinct cases:
+
+| Gesture | Condition | Behaviour |
+|---|---|---|
+| **Click** (no drag) | `width == 0` or `height == 0` | **Toggle** `is_selected` on the single character under the cursor using `collidepoint`. |
+| **Drag** (marquee) | `width > 0` and `height > 0` | **Set** `is_selected = True` for all characters whose bounding rect overlaps the selection rect (`colliderect`). Deselects everything else. |
 
 > [!NOTE]
-> `update()` is only called **on mouse-up** (from `Game.eventHandle`),
-> not every frame. `draw()` is called every frame by the game loop.
+> Selection iterates over `game.characters`, not `game.objects`. Only
+> entities placed in `game.characters` are selectable. Non-character
+> objects (like `TestObj`) are never affected.
+
+> [!NOTE]
+> Selection uses **full bounding-box** testing (`colliderect`) for
+> drag-select and `collidepoint` for click-select, using each object's
+> `size` attribute for the bounding rect.
 
 ---
 
 ### Event.py
 
-[`Event.py`] · 42 lines
+`Event.py` · 42 lines
 
 **Purpose:** Lightweight pub/sub event dispatcher. Lets subsystems register
 callbacks by pygame event type instead of bloating `Game.eventHandle`.
@@ -335,7 +404,7 @@ callbacks by pygame event type instead of bloating `Game.eventHandle`.
 | Method | Description |
 |---|---|
 | `addEvent(event)` | Register an `Event`. Creates the list on first use. |
-| `update(event)` | Called for **each** raw pygame event. Fires all callbacks registered for that event type. Silently creates an empty list for unseen event types. |
+| `update(event)` | Called for **each** raw pygame event. Fires all callbacks registered for that event type. |
 
 #### Usage Pattern
 
@@ -352,11 +421,17 @@ game.eventManager.addEvent(Event(game, pygame.KEYDOWN, on_key_down))
 > available for the caller's convenience but is not passed to the callback
 > automatically.
 
+> [!TIP]
+> Events can be created by any object and registered from anywhere.
+> `TestMouse` demonstrates this pattern — it creates an `Event` in its
+> own `__init__` and the `Game` registers it via
+> `self.eventManager.addEvent(testMouse.test_event)`.
+
 ---
 
 ### AssetManager.py
 
-[`AssetManager.py`] · 280 lines
+`AssetManager.py` · 280 lines
 
 **Purpose:** Centralised lazy-loading cache for images, sound effects,
 streamed music, and fonts. All paths are resolved relative to the `Asset/`
@@ -381,7 +456,7 @@ directory at the project root.
 | `_sfx` | `dict[str, Sound]` | Sound effect cache |
 | `_fonts` | `dict[tuple, Font]` | Font cache, keyed by `(key, size)` |
 | `_music_volume` | `float` | Current music volume (0.0–1.0) |
-| `_current_music` | `str or None` | Key of the currently loaded music |
+| `_current_music` | `str \| None` | Key of the currently loaded music |
 
 #### Methods — Images
 
@@ -441,81 +516,105 @@ This means you never hard-code extensions in game code:
 
 ```python
 # Both work — extension is optional:
-assets.image("Character/don_quixote")
-assets.image("Character/don_quixote.png")
+game.AssetManager.image("Character/don_quixote")
+game.AssetManager.image("Character/don_quixote.png")
 ```
 
 > [!NOTE]
-> `pygame.mixer.init()` is called inside `AssetManager.__init__`. If you
-> have already called `pygame.init()` (which also initialises the mixer),
-> this second call is harmless.
-
-> [!NOTE]
 > Music is **streamed**, not cached. Only one music track can play at a
-> time (pygame limitation). SFX are fully loaded into memory and can
-> overlap.
+> time (pygame limitation). SFX are fully loaded into memory and can overlap.
 
 ---
 
 ### Character.py
 
-[`Character.py`] · 40 lines
+`Character.py` · 24 lines
 
-**Purpose:** A game entity that draws a 10×10 grid of white filled
-rectangles. Placeholder for a player / NPC character.
+**Purpose:** A selectable game entity that renders a sprite with a
+selection outline. Uses `AssetManager` to load its model and `GameObject`
+drawing helpers to render.
 
 #### Class `Character` (extends `GameObject`)
 
 | Attribute | Type | Default | Description |
 |---|---|---|---|
-| `size` | `int` | `50` | Logical size (unused in `draw()`) |
+| `size` | `int` | `100` | Size in world units (used for model scaling and outline) |
 | `x, y` | `float` | `0` | World position |
+| `model` | `pygame.Surface` | — | Sprite loaded via `AssetManager.image_scaled()` |
+| `is_selected` | `bool` | `False` | Set by `MarqueeSelection` |
 
 #### Methods
 
 | Method | Description |
 |---|---|
-| `draw()` | Draws 10×10 grid of white rects, camera-projected. |
+| `draw()` | Calls `drawModel()` to render the sprite, then `drawRect()` with `border_width=5` to draw an outline. Outline is grey `(200, 200, 200)` when unselected, green `(100, 250, 100)` when selected. |
 | `update()` | No-op. |
 
-> [!WARNING]
-> `draw()` references `self.cell_size`, but `cell_size` is **never
-> defined** on `Character` or its parent `GameObject`. This will raise
-> `AttributeError` at runtime. Either add `self.cell_size = ...` in
-> `__init__`, or change the reference to `self.size`.
+> [!NOTE]
+> `Character` demonstrates the intended entity pattern:
+> 1. Load a sprite via `game.AssetManager.image_scaled()` into `self.model`
+> 2. Call `self.drawModel()` in `draw()` — the base class handles projection
+> 3. Optionally call `self.drawRect()` for debug/selection outlines
 
 > [!NOTE]
-> `Character` is **not registered** in `Game.objects` by default — it
-> exists as a template. Import it and append an instance to `game.objects`
-> to use it.
+> `Character` instances must be added to **both** `game.objects` (for
+> update/draw) and `game.characters` (for selection) in `Game.__init__`.
 
 ---
 
-### testObj.py
+### testObj.py — TestObj & TestMouse
 
-[`testObj.py`] · 40 lines
+`testObj.py` · 71 lines
 
-**Purpose:** Development-only grid entity. Draws a 10×10 wireframe grid
-to help visualise the camera and world coordinate system.
+**Purpose:** Two development/debug entities.
+
+---
 
 #### Class `TestObj` (extends `GameObject`)
 
+A 21×21 wireframe grid (from −10 to +10 on each axis) centred on the
+object's world position, to visualise the world coordinate system.
+
 | Attribute | Type | Default | Description |
 |---|---|---|---|
-| `cell_size` | `int` | `100` | Size of each grid cell in world units |
-| `x, y` | `float` | `0` | World position of the grid origin |
-
-#### Methods
+| `size` | `int` | `100` | Grid cell size in world units |
+| `x, y` | `float` | `0` | World position of the grid centre |
 
 | Method | Description |
 |---|---|
-| `draw()` | Draws a 10×10 grid of grey `(200, 200, 200)` outlined rects, camera-projected. |
+| `draw()` | Draws a 21×21 grid of grey `(150, 150, 150)` outlined rects, camera-projected. Grid spans from cell `(-10, -10)` to `(+10, +10)` relative to position. |
 | `update()` | No-op. |
 
 > [!NOTE]
-> `TestObj` is instantiated in `Game.__init__` and placed in
-> `game.objects` — it renders by default when you run the project.
-> The grid helps you verify that panning and zooming behave correctly.
+> `TestObj` does its own manual projection loop (for the grid) rather
+> than using `drawRect()`, because it needs to draw 441 cells offset
+> from a single origin.
+
+---
+
+#### Class `TestMouse` (extends `GameObject`)
+
+A white circle that follows the mouse cursor in **world space**. Demonstrates
+event-driven input: it uses `Camera.getWorldMousePos()` to convert screen
+mouse position to world coordinates.
+
+| Attribute | Type | Default | Description |
+|---|---|---|---|
+| `size` | `int` | `5` | Circle radius in world units |
+| `x, y` | `float` | `0` | World position (updated on mouse move) |
+| `test_event` | `Event` | — | `MOUSEMOTION` event, registered in `Game.__init__` |
+
+| Method | Description |
+|---|---|
+| `onMouseButtonDown(event)` | Callback for `MOUSEMOTION`. Updates `(x, y)` to the world-space mouse position via `camera.getWorldMousePos()`. |
+| `draw()` | Draws a white circle at the projected screen position, scaled by zoom. Uses `getPositionOnScreen()` and `getSizeScaleOnScreen()`. |
+| `update()` | No-op. |
+
+> [!TIP]
+> `TestMouse` is a good reference for:
+> - Creating `Event` objects outside of `Game` and registering them later
+> - Using `getWorldMousePos()` for screen→world coordinate conversion
+> - Using `getPositionOnScreen()` / `getSizeScaleOnScreen()` for drawing
 
 ---
 
@@ -530,11 +629,13 @@ graph LR
     Game --> AssetManager["AssetManager.py"]
     Game --> GameObject["GameObject.py"]
     Game --> testObj["testObj.py"]
+    Game --> Character["Character.py"]
 
     Camera --> GameObject
     Selection --> GameObject
     testObj --> GameObject
-    Character["Character.py"] --> GameObject
+    testObj --> Event
+    Character --> GameObject
 
     style main fill:#e9c46a,color:#000
     style Game fill:#2d6a4f,color:#fff
@@ -559,7 +660,8 @@ All game entities share the same pattern: extend `GameObject`, override
 | Mouse wheel up | Zoom in (5× speed) |
 | Mouse wheel down | Zoom out (5× speed) |
 | Right-click drag | Pan camera |
-| Left-click drag | Marquee select |
+| Left-click drag | Marquee select (characters) |
+| Left-click (no drag) | Toggle select single character |
 
 ---
 
@@ -578,56 +680,74 @@ class MyEntity(GameObject):
         super().__init__(game)
         self.x = x
         self.y = y
+        self.size = 50
+        # Load a sprite (optional)
+        self.model = game.AssetManager.image_scaled("Character/don_quixote", (self.size, self.size))
 
     def update(self):
-        # per-frame logic
-        pass
+        pass  # per-frame logic
 
     def draw(self):
-        cam   = self.game.camera
-        scale = max(0.1, 1.0 + cam.fov * 0.1)
-        cx    = self.game.surface.get_width()  // 2
-        cy    = self.game.surface.get_height() // 2
-        sx    = (self.x - cam.x) * scale + cx
-        sy    = (self.y - cam.y) * scale + cy
-
-        pygame.draw.circle(self.game.surface, (255, 0, 0), (int(sx), int(sy)), 20)
+        self.drawModel()                                         # draw sprite
+        self.drawRect((255, 255, 255), self.size, border_width=2)  # draw outline
 ```
 
 2. Register in `Game.__init__`:
 
 ```python
 from MyEntity import MyEntity
-self.objects.append(MyEntity(self, x=200, y=150))
+entity = MyEntity(self, x=200, y=150)
+self.objects.append(entity)
+# If it should be selectable:
+self.characters.append(entity)
 ```
 
 ### Register a Custom Event
 
 ```python
-# Inside any class that has self.game:
+# From inside any object:
 from Event import Event
 
-def on_space_press(event):
+def on_space(event):
     if event.key == pygame.K_SPACE:
         print("Space!")
 
-self.game.eventManager.addEvent(Event(self.game, pygame.KEYDOWN, on_space_press))
+self.game.eventManager.addEvent(Event(self.game, pygame.KEYDOWN, on_space))
 ```
 
-### Load and Draw a Sprite with AssetManager
+Or create the Event as an attribute and let Game register it (like `TestMouse`):
 
 ```python
-# In an entity's draw():
-sprite = self.game.AssetManager.image("Character/don_quixote")
-# scale to desired size
-sprite = self.game.AssetManager.image_scaled("Character/don_quixote", (64, 64))
+class MyObj(GameObject):
+    def __init__(self, game):
+        super().__init__(game)
+        self.my_event = Event(game, pygame.MOUSEBUTTONDOWN, self.onClick)
 
-cam   = self.game.camera
-scale = max(0.1, 1.0 + cam.fov * 0.1)
-cx    = self.game.surface.get_width()  // 2
-cy    = self.game.surface.get_height() // 2
-sx    = (self.x - cam.x) * scale + cx
-sy    = (self.y - cam.y) * scale + cy
+    def onClick(self, event):
+        print(f"Clicked button {event.button}")
 
-self.game.surface.blit(sprite, (sx, sy))
+# In Game.__init__:
+obj = MyObj(self)
+self.eventManager.addEvent(obj.my_event)
+```
+
+### Load and Draw a Sprite
+
+```python
+# In __init__:
+self.model = self.game.AssetManager.image_scaled("Character/don_quixote", (100, 100))
+
+# In draw():
+self.drawModel()  # that's it — projection & scaling is handled automatically
+```
+
+### Use Camera World↔Screen Conversion
+
+```python
+# Screen → World (e.g. for placing objects at cursor)
+world_x, world_y = self.game.camera.getWorldMousePos()
+
+# World → Screen (e.g. for custom drawing)
+screen_x, screen_y = self.getPositionOnScreen()
+scale = self.getSizeScaleOnScreen()
 ```

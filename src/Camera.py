@@ -19,8 +19,17 @@ class Camera(GameObject):
         elif self.fov > self.mx_fov:
             self.fov = self.mx_fov
 
-    def update(self):
+    def getWorldMousePos(self):
+        mx, my = pygame.mouse.get_pos()
+        scale = max(0.1, 1.0 + (self.fov * 0.1))
 
+        world_x = (mx - self.screen_center_x) / scale + self.x
+        world_y = (my - self.screen_center_y) / scale + self.y
+
+        return world_x, world_y
+
+
+    def update(self):
         keyPress = self.game.keyPressed
         dt = self.game.dt
         scale = max(0.1, 1.0 + (self.fov * 0.1))

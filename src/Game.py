@@ -1,7 +1,8 @@
 import pygame
 from Camera import Camera
 from GameObject import GameObject
-from testObj import TestObj
+from Character import Character
+from testObj import *
 from Event import *
 from Selection import MarqueeSelection
 from AssetManager import AssetManager
@@ -25,9 +26,12 @@ class Game:
         self.mouseButtonDown = 0
         self.mouseRel = [0,0]
         self.mouseClickPosition = (0,0)
-        self.eventManager = EventManager(self)
 
+
+        self.eventManager = EventManager(self)
         self.eventManager.addEvent(Event(self, pygame.QUIT, self.onQuit))
+
+        self.AssetManager = AssetManager(self)
 
         self.clock = pygame.time.Clock()
 
@@ -35,12 +39,18 @@ class Game:
         self.selection = MarqueeSelection(self)
 
         testObj = TestObj(self)
+        testMouse = TestMouse(self)
+        testChar = Character(self)
 
-        self.AssetManager = AssetManager(self)
 
-        self.objects = [testObj]
+        self.objects = [testObj, testChar, testMouse,]
 
-        self.fps = 60
+        self.eventManager.addEvent(testMouse.test_event)
+
+
+        self.characters = [testChar]
+
+        self.fps = 120
 
     
     def onQuit(self, event):
@@ -52,6 +62,8 @@ class Game:
             self.eventHandle()
             self.update()
             self.draw()
+
+            pygame.display.set_caption(f"Game - {int(self.clock.get_fps())}")
 
         self.quit()
 
@@ -90,6 +102,7 @@ class Game:
 
         for obj in self.objects:
             obj.update()
+
 
         
 
