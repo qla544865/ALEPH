@@ -1,8 +1,8 @@
 # ALEPH
 
-A 2D game framework built on **pygame**, featuring a zoomable/pannable camera, marquee selection, event dispatching, and a centralised asset manager.
+A 2D game framework built on **pygame** with a **Lua scripting system**, zoomable/pannable camera, sprite animation, LOD system, marquee selection, and a centralised asset manager.
 
-> **Python 3.10.1** · **pygame 2.6.1**
+> **Python 3.10.1** · **pygame 2.6.1** · **lupa ≥ 2.0**
 
 ---
 
@@ -30,18 +30,25 @@ python main.py
 ALEPH/
 ├── Asset/
 │   ├── Audio/              # SFX & music
-│   └── Character/          # Sprites
-│       └── don_quixote.png
+│   ├── Character/          # Character sprites
+│   └── Items/              # Item sprites
 ├── src/
 │   ├── main.py             # Entry point
-│   ├── Game.py             # Game loop & subsystem wiring
-│   ├── GameObject.py       # Base class — position, drawing helpers
-│   ├── Camera.py           # Pan & zoom camera + world↔screen conversion
-│   ├── Selection.py        # Marquee (rubber-band) selection
-│   ├── Event.py            # Event dispatcher
-│   ├── AssetManager.py     # Lazy-loading asset cache
-│   ├── Character.py        # Character entity (sprite + selection)
-│   └── testObj.py          # TestObj (debug grid) & TestMouse (cursor dot)
+│   ├── Core/               # Python engine modules
+│   │   ├── Game.py         # Game loop, loading screen, subsystem wiring
+│   │   ├── GameObject.py   # Base class — position, LOD, drawing helpers
+│   │   ├── Camera.py       # Camera (script-controlled)
+│   │   ├── Selection.py    # Marquee (rubber-band) selection
+│   │   ├── Event.py        # Event dispatcher
+│   │   ├── AssetManager.py # Lazy-loading asset cache + sprite helpers
+│   │   ├── ScriptLoader.py # Lua runtime, API bindings, script hot-loading
+│   │   ├── Sprite.py       # SpriteSheet, Animation, Sprite classes
+│   │   ├── Character.py    # Character entity
+│   │   ├── Item.py         # GameItem entity
+│   │   └── testObj.py      # TestObj (debug grid) & TestMouse (cursor dot)
+│   └── Script/             # Lua scripts (auto-loaded at startup)
+│       ├── CameraController.lua
+│       └── TestSystem.lua
 ├── .gitignore
 └── requirements.txt
 ```
@@ -52,87 +59,108 @@ ALEPH/
 
 ```
 main.py  →  Game
-              ├── Camera            (extends GameObject)
+              ├── AssetManager      (images, sprites, SFX, music, fonts)
+              ├── ScriptLoader      (Lua runtime + Camera/Input/Engine APIs)
+              ├── Camera            (extends GameObject, script-controlled)
               ├── MarqueeSelection  (extends GameObject)
               ├── EventManager      (dispatches Event callbacks)
-              ├── AssetManager      (images, SFX, music, fonts)
-              ├── objects[]         (TestObj, Character, TestMouse, ...)
-              └── characters[]      (selectable Character instances)
+              ├── objects[]         (TestObj, Character, GameItem, TestMouse)
+              └── characters[]      (selectable entities)
 ```
 
 **Frame loop** — every tick:
 
 ```
 eventHandle()  →  update()  →  draw()
+     │               │
+     │        ScriptLoader.update(dt)   ← runs Lua update() each frame
+     └── VIDEORESIZE handled → resizable window
 ```
 
-The window title shows the live FPS counter. Target framerate is **120**.
-
-See [Documentation.md](Documentation.md) for the full per-class API reference.
+See [Documentation.md](Documentation.md) for the full API reference.
 
 ---
 
 ## Controls
 
+> Camera is now **fully script-controlled** via `CameraController.lua`.
+
 | Input | Action |
 |---|---|
-| `W / A / S / D` | Pan camera |
+| `W / A / S / D` or Arrow keys | Pan camera |
+| `Shift` + pan keys | Fast pan (2.5×) |
 | `+` / `-` | Zoom in / out |
-| Mouse wheel | Zoom in / out (5× speed) |
+| Mouse wheel | Zoom (faster) |
 | Right-click drag | Pan camera |
+| `R` | Reset camera |
 | Left-click drag | Marquee select |
-| Left-click (no drag) | Toggle select on single character |
+| Left-click (no drag) | Toggle select single character |
 
 ---
 
-## Key Concepts
+## Lua Scripting
 
-### GameObject Drawing Helpers
+Drop any `.lua` file into `src/Script/`. It is loaded automatically at startup.
 
-All entities extend `GameObject`, which provides built-in drawing methods so
-subclasses don't need to manually compute camera projection:
+### Module Convention
 
-```python
-self.drawModel()                                        # draw self.model (sprite) with camera transform
-self.drawRect(color, size, offset=(0,0), border_width)  # draw a rect at world position + offset
-pos = self.getPositionOnScreen()                        # (screen_x, screen_y)
-scale = self.getSizeScaleOnScreen()                     # current zoom scale factor
+```lua
+local MySystem = {}
+
+function MySystem.init()
+    -- Called once on load
+end
+
+function MySystem.update(dt)
+    -- Called every frame, dt = delta time in seconds
+end
+
+return MySystem
 ```
 
-### AssetManager — Quick Reference
+### Built-in Global APIs
 
-All asset keys are relative to `Asset/`. Extensions are auto-resolved.
-
-```python
-# Images
-surf = game.AssetManager.image("Character/don_quixote")
-surf = game.AssetManager.image_scaled("Character/don_quixote", (64, 64))
-
-# Sound effects
-game.AssetManager.play_sfx("Audio/hit", volume=0.8)
-
-# Music (streaming, one track at a time)
-game.AssetManager.play_music("Audio/theme", loops=-1, volume=0.5)
-game.AssetManager.stop_music(fade_ms=500)
-
-# Fonts
-font = game.AssetManager.font("Fonts/pixel", size=24)
-```
-
-| Category | Supported Formats |
+| Global | Description |
 |---|---|
-| Image | `.png` `.jpg` `.jpeg` `.bmp` `.gif` `.tga` `.webp` |
-| SFX | `.wav` `.ogg` `.flac` |
-| Music | `.mp3` `.ogg` `.mid` `.midi` `.mod` `.xm` |
-| Font | `.ttf` `.otf` |
+| `Camera` | Pan, zoom, reset, coordinate conversion |
+| `Input` | Key/mouse state queries |
+| `Engine` | DT, FPS, screen size |
+| `Time` | Alias for Engine (DT, FPS) |
+| `Key` | Named key constants (e.g. `Key.W`, `Key.SPACE`) |
 
-### EventManager
+#### Camera API
 
-Register callbacks for any pygame event type:
+```lua
+Camera.get_pos()               -- returns x, y
+Camera.set_pos(x, y)
+Camera.move(dx, dy)            -- alias: Camera.pan
+Camera.get_fov()
+Camera.set_fov(fov)
+Camera.change_fov(dfov)        -- alias: Camera.zoom
+Camera.get_scale()             -- current zoom scale factor
+Camera.get_world_mouse_pos()   -- mouse position in world coords
+Camera.screen_to_world(sx, sy)
+Camera.world_to_screen(wx, wy)
+Camera.reset()                 -- x=0, y=0, fov=0
+```
 
-```python
-from Event import Event
-game.eventManager.addEvent(Event(game, pygame.KEYDOWN, my_callback))
+#### Input API
+
+```lua
+Input.is_key_pressed("w")           -- also: Key.W, "up", "space", etc.
+Input.get_mouse_pos()               -- returns mx, my (screen)
+Input.is_mouse_pressed(1)           -- 1=left, 2=middle, 3=right  or "left"/"right"
+Input.get_scroll()                  -- mouse wheel delta
+Input.get_mouse_rel()               -- dx, dy since last frame
+```
+
+#### Engine / Time API
+
+```lua
+Engine.get_dt()           -- delta time in seconds
+Engine.get_fps()
+Engine.get_screen_size()  -- returns w, h
+Engine.log("message")     -- prints to console with [Debug/Lua] prefix
 ```
 
 ---
@@ -140,39 +168,64 @@ game.eventManager.addEvent(Event(game, pygame.KEYDOWN, my_callback))
 ## Adding a New Entity
 
 ```python
-# src/MyEntity.py
-import pygame
-from GameObject import GameObject
+# src/Core/MyEntity.py
+from Core.GameObject import GameObject
 
 class MyEntity(GameObject):
     def __init__(self, game, x=0, y=0):
         super().__init__(game)
         self.x, self.y = x, y
-        self.size = 50
-        self.model = game.AssetManager.image_scaled("Character/don_quixote", (self.size, self.size))
+        self.size = (64, 64)
+        self.model = game.AssetManager.image_scaled("Character/don_quixote", self.size)
 
-    def update(self):
-        pass  # per-frame logic
+    def update(self): pass
 
     def draw(self):
-        self.drawModel()                                    # sprite
-        self.drawRect((255, 255, 255), self.size, border_width=2)  # outline
+        sx, sy = self.getPositionOnScreen()
+        scale = self.getSizeScaleOnScreen()
+        sw = int(self.size[0] * scale)
+        sh = int(self.size[1] * scale)
+        if self.isOnScreen(sx, sy, sw, sh):
+            self.drawModel()
+            self.drawRect((255, 255, 255), self.size, border_width=2)
 ```
 
-Register it in `Game.__init__`:
+Register in `Game._load_character()`:
 
 ```python
-from MyEntity import MyEntity
 entity = MyEntity(self, x=200, y=150)
 self.objects.append(entity)
-# If it should be selectable:
-self.characters.append(entity)
+self.characters.append(entity)  # if selectable
 ```
+
+---
+
+## Adding a New Lua Script
+
+Create `src/Script/MyScript.lua`:
+
+```lua
+local MyScript = {}
+
+function MyScript.init()
+    Engine.log("MyScript loaded!")
+end
+
+function MyScript.update(dt)
+    if Input.is_key_pressed(Key.SPACE) then
+        Camera.reset()
+    end
+end
+
+return MyScript
+```
+
+It will be discovered and loaded automatically next run.
 
 ---
 
 ## Documentation
 
-Full per-class API reference, attribute tables, architecture diagrams, and notes:
+Full per-class API reference, architecture diagrams, and guides:
 
 → [Documentation.md](Documentation.md)

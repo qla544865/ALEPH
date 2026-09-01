@@ -3,7 +3,7 @@ import os
 
 
 # Root asset folder relative to this file's location
-ASSET_DIR = os.path.join(os.path.dirname(__file__), "..", "Asset")
+ASSET_DIR = os.path.join(os.path.dirname(__file__), "..\..", "Asset")
 
 # Supported file extensions per category
 IMAGE_EXTS  = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tga", ".webp"}
@@ -113,6 +113,67 @@ class AssetManager:
     def unload_image(self, key: str) -> None:
         """Remove a cached image to free memory."""
         self._images.pop(key, None)
+
+    # ------------------------------------------------------------------
+    # Sprites & Animations
+    # ------------------------------------------------------------------
+
+    def spritesheet(self, key: str, alpha: bool = True):
+        """Return a ``SpriteSheet`` for *key*."""
+        from Core.Sprite import SpriteSheet
+        return SpriteSheet.from_asset(self, key, alpha=alpha)
+
+    def animation(
+        self,
+        key: str,
+        cols: int,
+        rows: int,
+        fps: float = 12.0,
+        loop: bool = True,
+        frame_count: int | None = None,
+        scale_size: tuple[int, int] | None = None,
+        alpha: bool = True,
+    ):
+        """Load a sprite sheet and return an ``Animation`` from a grid."""
+        from Core.Sprite import load_animation
+        return load_animation(
+            self,
+            key=key,
+            cols=cols,
+            rows=rows,
+            fps=fps,
+            loop=loop,
+            frame_count=frame_count,
+            scale_size=scale_size,
+            alpha=alpha,
+        )
+
+    def animated_sprite(
+        self,
+        key: str,
+        cols: int = 1,
+        rows: int = 1,
+        fps: float = 12.0,
+        loop: bool = True,
+        frame_count: int | None = None,
+        scale_size: tuple[int, int] | None = None,
+        animation_name: str = "default",
+        alpha: bool = True,
+    ):
+        """Load a sprite sheet grid and return a ready-to-use ``Sprite``."""
+        from Core.Sprite import load_sprite
+        return load_sprite(
+            self,
+            key=key,
+            cols=cols,
+            rows=rows,
+            fps=fps,
+            loop=loop,
+            frame_count=frame_count,
+            scale_size=scale_size,
+            animation_name=animation_name,
+            alpha=alpha,
+        )
 
     # ------------------------------------------------------------------
     # SFX

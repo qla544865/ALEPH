@@ -1,5 +1,5 @@
 import pygame
-from GameObject import GameObject
+from Core.GameObject import GameObject
 
 
 class MarqueeSelection(GameObject):
@@ -31,8 +31,15 @@ class MarqueeSelection(GameObject):
             draw_x = (obj.x - camera.x) * scale + screen_center_x
             draw_y = (obj.y - camera.y) * scale + screen_center_y
             
-            zoomed_size = obj.size * scale 
-            obj_rect = pygame.Rect(draw_x, draw_y, zoomed_size, zoomed_size)
+
+            if isinstance(obj.size, tuple):
+                zoomed_size_w = obj.size[0] * scale
+                zoomed_size_h = obj.size[1] * scale
+            elif isinstance(obj.size, float) or isinstance(obj.size, int):
+                zoomed_size_w = obj.size * scale
+                zoomed_size_h = zoomed_size_w
+
+            obj_rect = pygame.Rect(draw_x, draw_y, zoomed_size_w, zoomed_size_h)
 
             if (width == 0 or height == 0) and obj_rect.collidepoint(min_x, min_y) :
                 self.selected_objects.append(obj)
